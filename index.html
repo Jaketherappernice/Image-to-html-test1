@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Image to HTML (Boxes + Text + Color)</title>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.5/dist/tesseract.min.js"></script>
+  <script src="https://docs.opencv.org/3.4.0/opencv.js" onload="onOpenCvReady();"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #111;
+      color: #fff;
+      text-align: center;
+      padding: 2rem;
+    }
+    input, button {
+      margin: 10px;
+      padding: 10px;
+    }
+    canvas {
+      display: none;
+    }
+    textarea {
+      width: 95%;
+      height: 300px;
+      margin-top: 20px;
+      font-family: monospace;
+      background: #222;
+      color: #0f0;
+    }
+  </style>
+</head>
+<body>
+  <h1>🧠 Image ➜ HTML Box & Text Detector</h1>
+  <input type="file" accept="image/*" onchange="handleImage(event)" />
+  <button onclick="processImage()">Convert to HTML</button>
+  <p id="status">Waiting...</p>
+  <canvas id="canvasInput"></canvas>
+  <textarea id="output" placeholder="Generated HTML will appear here..."></textarea>
+
+  <script>
+    let uploadedImage = null;
+    let isOpenCVReady = false;
+
+    function onOpenCvReady() {
+      isOpenCVReady = true;
+      document.getElementById("status").innerText = "OpenCV Ready!";
+    }
+
+    function handleImage(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        uploadedImage = new Image();
+        uploadedImage.onload = () => {
+          document.getElementById("status").innerText = "Image loaded. Click Convert.";
+        };
+        uploadedImage.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function processImage() {
+      if (!isOpenCVReady || !uploadedImage) {
+        alert("Make sure OpenCV is ready and you've uploaded an image.");
+        return;
+      }
+
+      const canvas = document.getElementById('canvasInput');
+      const ctx = canvas.getContext('2d');
+      canvas.width = uploadedImage.width;
+      canvas.height = uploadedImage.height;
+      ctx.drawImage(uploadedImage, 0, 0);
+
+      const src = cv.imread(canvas);
+      const gray = new cv.Mat();
+      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+      const edges = new cv.Mat();
+      cv.Canny(gray, edges, 50, 150);
+
+      const contours = new cv.MatVector();
+      const hierarchy = new cv.Mat();
+      cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      let htmlOutput = "";
+      const promises = [];
+
+      for (let i = 0; i < contours.size(); ++i) {
+        const cnt = contours.get(i);
+        const rect = cv.boundingRect(cnt);
+        if (rect.width < 50 || rect.height < 20) continue;
+
+        const roi = src.roi(rect);
+        const avgColor = getAverageColor(roi);
+
+        const roiCanvas = document.createElement('canvas');
+        roiCanvas.width = rect.width;
+        roiCanvas.height = rect.height;
+        roiCanvas.getContext('2d').drawImage(
+          canvas,
+          rect.x, rect.y, rect.width, rect.height,
+          0, 0, rect.width, rect.height
+        );
+
+        const base64 = roiCanvas.toDataURL();
+        const ocrPromise = Tesseract.recognize(base64, 'eng').then(({ data: { text } }) => {
+          const cleanText = text.trim().replace(/\n+/g, ' ');
+          htmlOutput += `<div style="background:${avgColor}; width:${rect.width}px; height:${rect.height}px; border:1px solid #ccc; margin:5px;">\n  <p>${cleanText}</p>\n</div>\n`;
+        });
+
+        promises.push(ocrPromise);
+        roi.delete();
+      }
+
+      Promise.all(promises).then(() => {
+        document.getElementById('output').value = htmlOutput;
+        document.getElementById('status').innerText = "✅ Done!";
+        src.delete(); gray.delete(); edges.delete(); contours.delete(); hierarchy.delete();
+      });
+    }
+
+    function getAverageColor(mat) {
+      let r = 0, g = 0, b = 0;
+      const total = mat.rows * mat.cols;
+      for (let y = 0; y < mat.rows; y++) {
+        for (let x = 0; x < mat.cols; x++) {
+          const pixel = mat.ucharPtr(y, x);
+          r += pixel[0];
+          g += pixel[1];
+          b += pixel[2];
+        }
+      }
+      r = Math.round(r / total);
+      g = Math.round(g / total);
+      b = Math.round(b / total);
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+  </script>
+</body>
+</html>
